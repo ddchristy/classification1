@@ -7,17 +7,13 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from PIL import Image
 
-# ============================================================
-# 基础配置：你主要改这里
-# ============================================================
-IMAGE_DIR = "3band"  # 图片文件夹
+
+IMAGE_DIR = "3band"  
 ALLOWED_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
 LABELS = ["inner", "outer", "nuclear", "unclear", "not_ring", "skip"]
 GSHEET_ID = "1MAKgvgP0vFVTPpjLWmWhDKODEZHkP1ZRk7uVipAYsIs"
 
-# ============================================================
-# 页面设置
-# ============================================================
+
 st.set_page_config(page_title="Ring Galaxy Classifier", layout="wide")
 st.title("Ring Galaxy Classifier")
 
@@ -48,11 +44,9 @@ def init_gsheet():
         "https://www.googleapis.com/auth/drive",
     ]
 
-    base_dir = Path(__file__).resolve().parent
-    cred_path = base_dir / "credentials.json"
-
-    creds = ServiceAccountCredentials.from_json_keyfile_name(
-        str(cred_path), scope
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(
+        st.secrets["gcp_service_account"],
+        scope,
     )
     client = gspread.authorize(creds)
     sheet = client.open_by_key(GSHEET_ID).sheet1
@@ -302,14 +296,16 @@ with main_right:
             if st.button(label, key=f"cls_bottom_{label}", use_container_width=True):
                 clicked_label = label
 
-    st.markdown("### 备注")
-    if existing and not st.session_state.comment_cache:
-        prefill_comment = str(existing.get("comment", ""))
-    else:
-        prefill_comment = st.session_state.comment_cache
+        st.markdown("### 备注")
+        if "comment_input" not in st.session_state:
+            st.session_state.comment_input = ""
 
-    comment = st.text_input("备注（可选）", value=prefill_comment)
-    st.session_state.comment_cache = comment
+        if existing and not st.session_state.comment_cache and not st.session_state.comment_input:
+            prefill_comment = str(existing.get("comment", ""))
+            st.session_state.comment_input = prefill_comment
+
+        comment = st.text_input("备注（可选）", key="comment_input")
+        st.session_state.comment_cache = comment
 
 if clicked_label is not None:
     save_annotation(user_name, str(current_image), clicked_label, comment)
@@ -318,7 +314,9 @@ if clicked_label is not None:
     next_idx = get_next_unlabeled_index(images, st.session_state.user_done_names)
     if next_idx is not None:
         st.session_state.current_index = next_idx
+
     st.session_state.comment_cache = ""
+    st.session_state.comment_input = ""
     st.rerun()
 
 if st.session_state.last_saved_message:
