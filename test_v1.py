@@ -44,11 +44,9 @@ def init_gsheet():
         "https://www.googleapis.com/auth/drive",
     ]
 
-    base_dir = Path(__file__).resolve().parent
-    cred_path = base_dir / "credentials.json"
-
-    creds = ServiceAccountCredentials.from_json_keyfile_name(
-        str(cred_path), scope
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(
+        st.secrets["gcp_service_account"],
+        scope,
     )
     client = gspread.authorize(creds)
     sheet = client.open_by_key(GSHEET_ID).sheet1
