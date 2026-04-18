@@ -7,17 +7,13 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from PIL import Image
 
-# ============================================================
-# 基础配置：你主要改这里
-# ============================================================
-IMAGE_DIR = "3band"  # 图片文件夹
+
+IMAGE_DIR = "3band"  
 ALLOWED_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
 LABELS = ["inner", "outer", "nuclear", "unclear", "not_ring", "skip"]
 GSHEET_ID = "1MAKgvgP0vFVTPpjLWmWhDKODEZHkP1ZRk7uVipAYsIs"
 
-# ============================================================
-# 页面设置
-# ============================================================
+
 st.set_page_config(page_title="Ring Galaxy Classifier", layout="wide")
 st.title("Ring Galaxy Classifier")
 
@@ -117,9 +113,7 @@ def save_annotation(user_name: str, image_path: str, label: str, comment: str):
     fetch_user_records_from_gsheet.clear()
 
 
-# ============================================================
-# 图片列表
-# ============================================================
+
 def load_images():
     image_dir = Path(IMAGE_DIR)
     if not image_dir.exists():
@@ -140,9 +134,7 @@ def get_next_unlabeled_index(images, done_names):
     return 0 if images else None
 
 
-# ============================================================
-# 初始化状态
-# ============================================================
+
 images = load_images()
 
 if "user_name" not in st.session_state:
