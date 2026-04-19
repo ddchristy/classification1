@@ -86,6 +86,31 @@ def fetch_user_records_from_gsheet(user_name: str):
         return []
 
 
+def build_marked_history(user_records):
+    """
+    根据当前用户记录构建“标注历史”：
+    - 同一张图只保留一次
+    - 按 timestamp 从早到晚排序
+    - 若 timestamp 解析失败，则尽量放后面
+    """
+    latest_map = {}
+
+    for r in user_records:
+        image_name = str(r.get("image_name", "")).strip()
+        ts = str(r.get("timestamp", "")).strip()
+
+        try:
+            dt = datetime.strptime(ts, "%Y-%m-%d %H:%M:%S")
+        except Exception:
+            dt = datetime.min
+
+        if image_name:
+            latest_map[image_name] = (dt, r)
+
+    ordered = sorted(latest_map.items(), key=lambda x: x[1][0])
+    return [img_name for img_name, _ in ordered]
+
+
 def load_user_state(user_name: str):
     user_records = fetch_user_records_from_gsheet(user_name)
     user_done_names = {str(r.get("image_name", "")).strip() for r in user_records}
@@ -99,6 +124,17 @@ def load_user_state(user_name: str):
     st.session_state.user_records = user_records
     st.session_state.user_done_names = user_done_names
     st.session_state.user_record_map = user_record_map
+    st.session_state.marked_history = build_marked_history(user_records)
+
+
+def move_image_to_history_end(image_name: str):
+    """
+    把刚标注/刚修改的图片放到用户历史末尾，表示“最近一次标注”
+    """
+    history = st.session_state.get("marked_history", [])
+    history = [x for x in history if x != image_name]
+    history.append(image_name)
+    st.session_state.marked_history = history
 
 
 def save_annotation(user_name: str, image_path: str, label: str, comment: str):
@@ -135,6 +171,7 @@ def save_annotation(user_name: str, image_path: str, label: str, comment: str):
 
         st.session_state.user_record_map[image_name] = updated_record
         st.session_state.user_done_names.add(image_name)
+        move_image_to_history_end(image_name)
 
     else:
         row = [user_name, image_name, label, comment, now]
@@ -154,6 +191,7 @@ def save_annotation(user_name: str, image_path: str, label: str, comment: str):
         st.session_state.user_records = user_records
         st.session_state.user_done_names = user_done_names
         st.session_state.user_record_map = user_record_map
+        move_image_to_history_end(image_name)
 
     fetch_user_records_from_gsheet.clear()
 
@@ -191,6 +229,32 @@ def get_index_by_exact_image_number(images, image_number: int):
             return i
     return None
 
+
+def get_previous_marked_index(images, current_image_name, marked_history):
+    """
+    上一张 = 跳到“用户标注历史中的上一张”
+    规则：
+    - 如果当前图片不在历史里 -> 跳到最后一张已标注图片
+    - 如果当前图片在历史里且不是第一张 -> 跳到历史中的前一张
+    - 如果当前图片已经是历史第一张 -> 仍停在第一张
+    """
+    if not marked_history:
+        return None
+
+    name_to_index = {p.name: i for i, p in enumerate(images)}
+
+    if current_image_name not in marked_history:
+        target_name = marked_history[-1]
+        return name_to_index.get(target_name)
+
+    pos = marked_history.index(current_image_name)
+    if pos <= 0:
+        target_name = marked_history[0]
+    else:
+        target_name = marked_history[pos - 1]
+
+    return name_to_index.get(target_name)
+
 # ============================================================
 # 初始化状态
 # ============================================================
@@ -210,6 +274,8 @@ if "user_done_names" not in st.session_state:
     st.session_state.user_done_names = set()
 if "user_record_map" not in st.session_state:
     st.session_state.user_record_map = {}
+if "marked_history" not in st.session_state:
+    st.session_state.marked_history = []
 if "comment_value" not in st.session_state:
     st.session_state.comment_value = ""
 if "pending_comment_reset" not in st.session_state:
@@ -330,7 +396,13 @@ with main_right:
 
     with nav1:
         if st.button("上一张", use_container_width=True):
-            st.session_state.current_index = max(0, current_index - 1)
+            prev_idx = get_previous_marked_index(
+                images=images,
+                current_image_name=current_image.name,
+                marked_history=st.session_state.marked_history,
+            )
+            if prev_idx is not None:
+                st.session_state.current_index = prev_idx
             st.session_state.pending_comment_reset = True
             st.rerun()
 
