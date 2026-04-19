@@ -304,9 +304,42 @@ if not st.session_state.user_name:
     st.info("请先在左侧输入用户名。")
     st.stop()
 
+# ============================================================
+# 分类标准（PDF）
+# ============================================================
+st.sidebar.markdown("---")
+st.sidebar.subheader("分类标准")
+
+PDF_PATH = "criteria.pdf"   # 改成你的 PDF 文件名
+
+show_pdf = st.sidebar.checkbox("打开分类标准", value=False)
+
+if show_pdf:
+    if Path(PDF_PATH).exists():
+        import base64
+
+        with open(PDF_PATH, "rb") as f:
+            pdf_bytes = f.read()
+
+        base64_pdf = base64.b64encode(pdf_bytes).decode("utf-8")
+        pdf_display = f"""
+        <iframe
+            src="data:application/pdf;base64,{base64_pdf}"
+            width="100%"
+            height="700px"
+            type="application/pdf"
+            style="border: 1px solid #ddd; border-radius: 8px;"
+        ></iframe>
+        """
+        st.sidebar.markdown(pdf_display, unsafe_allow_html=True)
+    else:
+        st.sidebar.warning(f"未找到 PDF 文件：{PDF_PATH}")
+
 user_name = st.session_state.user_name
 num_total = len(images)
 num_done = len(st.session_state.user_done_names)
+
+
 
 if num_total == 0:
     st.error(f"没有在文件夹 '{IMAGE_DIR}' 中找到图片。")
