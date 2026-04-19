@@ -8,8 +8,7 @@ import streamlit as st
 from oauth2client.service_account import ServiceAccountCredentials
 from PIL import Image
 
-
-IMAGE_DIR = "3band"  
+IMAGE_DIR = "3band"
 ALLOWED_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
 LABELS = ["inner", "outer", "nuclear", "unclear", "not_ring", "skip"]
 GSHEET_ID = "1MAKgvgP0vFVTPpjLWmWhDKODEZHkP1ZRk7uVipAYsIs"
@@ -35,10 +34,9 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-
 # ============================================================
 # Google Sheets
-# ===========================================================
+# ============================================================
 @st.cache_resource
 def init_gsheet():
     scope = [
@@ -60,11 +58,10 @@ def fetch_user_records_from_gsheet(user_name: str):
     try:
         sheet = init_gsheet()
         records = sheet.get_all_records()
-        user_records = [
+        return [
             r for r in records
             if str(r.get("user_name", "")).strip() == user_name
         ]
-        return user_records
     except Exception:
         return []
 
@@ -98,21 +95,15 @@ def save_annotation(user_name: str, image_path: str, label: str, comment: str):
         "timestamp": now,
     }
 
-    if "user_records" not in st.session_state:
-        st.session_state.user_records = []
-    if "user_done_names" not in st.session_state:
-        st.session_state.user_done_names = set()
-    if "user_record_map" not in st.session_state:
-        st.session_state.user_record_map = {}
-
     st.session_state.user_records.append(record)
     st.session_state.user_done_names.add(image_name)
     st.session_state.user_record_map[image_name] = record
 
     fetch_user_records_from_gsheet.clear()
 
-
-
+# ============================================================
+# 图片列表
+# ============================================================
 def load_images():
     image_dir = Path(IMAGE_DIR)
     if not image_dir.exists():
@@ -122,6 +113,7 @@ def load_images():
     for p in image_dir.iterdir():
         if p.is_file() and p.suffix.lower() in ALLOWED_EXTS:
             files.append(p)
+
     files.sort(key=lambda x: x.name)
     return files
 
@@ -132,8 +124,9 @@ def get_next_unlabeled_index(images, done_names):
         return 0 if images else None
     return random.choice(candidates)
 
-
-
+# ============================================================
+# 初始化状态
+# ============================================================
 images = load_images()
 
 if "user_name" not in st.session_state:
@@ -142,10 +135,6 @@ if "last_user_name" not in st.session_state:
     st.session_state.last_user_name = ""
 if "current_index" not in st.session_state:
     st.session_state.current_index = 0
-if "comment_cache" not in st.session_state:
-    st.session_state.comment_cache = ""
-if "comment_input" not in st.session_state:
-    st.session_state.comment_input = ""
 if "last_saved_message" not in st.session_state:
     st.session_state.last_saved_message = ""
 if "user_records" not in st.session_state:
@@ -154,7 +143,10 @@ if "user_done_names" not in st.session_state:
     st.session_state.user_done_names = set()
 if "user_record_map" not in st.session_state:
     st.session_state.user_record_map = {}
-
+if "comment_value" not in st.session_state:
+    st.session_state.comment_value = ""
+if "pending_comment_reset" not in st.session_state:
+    st.session_state.pending_comment_reset = False
 
 # ============================================================
 # 侧边栏：用户
@@ -166,12 +158,11 @@ if user_name:
     if user_name != st.session_state.last_user_name:
         st.session_state.user_name = user_name
         st.session_state.last_user_name = user_name
-        st.session_state.comment_cache = ""
-        st.session_state.comment_input = ""
         load_user_state(user_name)
         next_idx = get_next_unlabeled_index(images, st.session_state.user_done_names)
         if next_idx is not None:
             st.session_state.current_index = next_idx
+        st.session_state.pending_comment_reset = True
         st.rerun()
     else:
         st.session_state.user_name = user_name
@@ -189,23 +180,23 @@ if num_total == 0:
     st.stop()
 
 side1, side2 = st.sidebar.columns(2)
+
 with side1:
     if st.button("刷新当前用户记录", use_container_width=True):
         load_user_state(user_name)
         next_idx = get_next_unlabeled_index(images, st.session_state.user_done_names)
         if next_idx is not None:
             st.session_state.current_index = next_idx
-        st.session_state.comment_cache = ""
-        st.session_state.comment_input = ""
+        st.session_state.pending_comment_reset = True
         st.rerun()
+
 with side2:
     if st.button("跳到未标注", use_container_width=True):
         next_idx = get_next_unlabeled_index(images, st.session_state.user_done_names)
         if next_idx is not None:
             st.session_state.current_index = next_idx
-            st.session_state.comment_cache = ""
-            st.session_state.comment_input = ""
-            st.rerun()
+        st.session_state.pending_comment_reset = True
+        st.rerun()
 
 st.sidebar.markdown(f"**当前用户：** {user_name}")
 st.sidebar.markdown(f"**已完成：** {num_done} / {num_total}")
@@ -223,15 +214,25 @@ if st.session_state.user_records:
         mime="text/csv",
     )
 
-
 # ============================================================
-# 主界面
+# 当前图片
 # ============================================================
 current_index = max(0, min(st.session_state.current_index, num_total - 1))
 st.session_state.current_index = current_index
 current_image = images[current_index]
 existing = st.session_state.user_record_map.get(current_image.name)
 
+if st.session_state.pending_comment_reset:
+    st.session_state.comment_value = ""
+    st.session_state.pending_comment_reset = False
+elif existing and st.session_state.comment_value == "":
+    old_comment = str(existing.get("comment", "")).strip()
+    if old_comment:
+        st.session_state.comment_value = old_comment
+
+# ============================================================
+# 主界面
+# ============================================================
 main_left, main_right = st.columns([4.6, 1.8])
 
 with main_left:
@@ -259,17 +260,17 @@ with main_left:
 with main_right:
     st.markdown("### 导航")
     nav1, nav2 = st.columns(2)
+
     with nav1:
         if st.button("上一张", use_container_width=True):
             st.session_state.current_index = max(0, current_index - 1)
-            st.session_state.comment_cache = ""
-            st.session_state.comment_input = ""
+            st.session_state.pending_comment_reset = True
             st.rerun()
+
     with nav2:
         if st.button("下一张", use_container_width=True):
             st.session_state.current_index = min(num_total - 1, current_index + 1)
-            st.session_state.comment_cache = ""
-            st.session_state.comment_input = ""
+            st.session_state.pending_comment_reset = True
             st.rerun()
 
     st.markdown("### 快速跳转")
@@ -282,8 +283,7 @@ with main_right:
     )
     if st.button("跳转", use_container_width=True):
         st.session_state.current_index = int(jump_index) - 1
-        st.session_state.comment_cache = ""
-        st.session_state.comment_input = ""
+        st.session_state.pending_comment_reset = True
         st.rerun()
 
     st.markdown("### 分类")
@@ -305,11 +305,7 @@ with main_right:
                 clicked_label = label
 
     st.markdown("### 备注")
-    if existing and not st.session_state.comment_cache and not st.session_state.comment_input:
-        st.session_state.comment_input = str(existing.get("comment", ""))
-
-    comment = st.text_input("备注（可选）", key="comment_input")
-    st.session_state.comment_cache = comment
+    comment = st.text_input("备注（可选）", key="comment_value")
 
 if clicked_label is not None:
     save_annotation(user_name, str(current_image), clicked_label, comment)
@@ -319,8 +315,7 @@ if clicked_label is not None:
     if next_idx is not None:
         st.session_state.current_index = next_idx
 
-    st.session_state.comment_cache = ""
-    st.session_state.comment_input = ""
+    st.session_state.pending_comment_reset = True
     st.rerun()
 
 if st.session_state.last_saved_message:
