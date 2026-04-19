@@ -112,9 +112,7 @@ def save_annotation(user_name: str, image_path: str, label: str, comment: str):
     fetch_user_records_from_gsheet.clear()
 
 
-# ============================================================
-# 图片列表
-# ============================================================
+
 def load_images():
     image_dir = Path(IMAGE_DIR)
     if not image_dir.exists():
@@ -135,9 +133,7 @@ def get_next_unlabeled_index(images, done_names):
     return random.choice(candidates)
 
 
-# ============================================================
-# 初始化状态
-# ============================================================
+
 images = load_images()
 
 if "user_name" not in st.session_state:
