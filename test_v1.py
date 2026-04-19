@@ -1,9 +1,10 @@
-import streamlit as st
+import random
 from pathlib import Path
 from datetime import datetime
 
-import pandas as pd
 import gspread
+import pandas as pd
+import streamlit as st
 from oauth2client.service_account import ServiceAccountCredentials
 from PIL import Image
 
@@ -34,9 +35,10 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+
 # ============================================================
 # Google Sheets
-# ============================================================
+# ===========================================================
 @st.cache_resource
 def init_gsheet():
     scope = [
@@ -88,7 +90,6 @@ def save_annotation(user_name: str, image_path: str, label: str, comment: str):
     row = [user_name, image_name, label, comment, now]
     sheet.append_row(row)
 
-    # 保存后立刻更新当前 session，避免再次整表读取
     record = {
         "user_name": user_name,
         "image_name": image_name,
@@ -128,10 +129,10 @@ def load_images():
 
 
 def get_next_unlabeled_index(images, done_names):
-    for i, p in enumerate(images):
-        if p.name not in done_names:
-            return i
-    return 0 if images else None
+    candidates = [i for i, p in enumerate(images) if p.name not in done_names]
+    if not candidates:
+        return 0 if images else None
+    return random.choice(candidates)
 
 
 # ============================================================
@@ -147,6 +148,8 @@ if "current_index" not in st.session_state:
     st.session_state.current_index = 0
 if "comment_cache" not in st.session_state:
     st.session_state.comment_cache = ""
+if "comment_input" not in st.session_state:
+    st.session_state.comment_input = ""
 if "last_saved_message" not in st.session_state:
     st.session_state.last_saved_message = ""
 if "user_records" not in st.session_state:
@@ -168,6 +171,7 @@ if user_name:
         st.session_state.user_name = user_name
         st.session_state.last_user_name = user_name
         st.session_state.comment_cache = ""
+        st.session_state.comment_input = ""
         load_user_state(user_name)
         next_idx = get_next_unlabeled_index(images, st.session_state.user_done_names)
         if next_idx is not None:
@@ -196,6 +200,7 @@ with side1:
         if next_idx is not None:
             st.session_state.current_index = next_idx
         st.session_state.comment_cache = ""
+        st.session_state.comment_input = ""
         st.rerun()
 with side2:
     if st.button("跳到未标注", use_container_width=True):
@@ -203,10 +208,14 @@ with side2:
         if next_idx is not None:
             st.session_state.current_index = next_idx
             st.session_state.comment_cache = ""
+            st.session_state.comment_input = ""
             st.rerun()
 
 st.sidebar.markdown(f"**当前用户：** {user_name}")
 st.sidebar.markdown(f"**已完成：** {num_done} / {num_total}")
+
+if num_done >= num_total and num_total > 0:
+    st.sidebar.success("该用户已完成全部图片。")
 
 if st.session_state.user_records:
     csv_df = pd.DataFrame(st.session_state.user_records)
@@ -258,11 +267,13 @@ with main_right:
         if st.button("上一张", use_container_width=True):
             st.session_state.current_index = max(0, current_index - 1)
             st.session_state.comment_cache = ""
+            st.session_state.comment_input = ""
             st.rerun()
     with nav2:
         if st.button("下一张", use_container_width=True):
             st.session_state.current_index = min(num_total - 1, current_index + 1)
             st.session_state.comment_cache = ""
+            st.session_state.comment_input = ""
             st.rerun()
 
     st.markdown("### 快速跳转")
@@ -276,6 +287,7 @@ with main_right:
     if st.button("跳转", use_container_width=True):
         st.session_state.current_index = int(jump_index) - 1
         st.session_state.comment_cache = ""
+        st.session_state.comment_input = ""
         st.rerun()
 
     st.markdown("### 分类")
@@ -296,16 +308,12 @@ with main_right:
             if st.button(label, key=f"cls_bottom_{label}", use_container_width=True):
                 clicked_label = label
 
-        st.markdown("### 备注")
-        if "comment_input" not in st.session_state:
-            st.session_state.comment_input = ""
+    st.markdown("### 备注")
+    if existing and not st.session_state.comment_cache and not st.session_state.comment_input:
+        st.session_state.comment_input = str(existing.get("comment", ""))
 
-        if existing and not st.session_state.comment_cache and not st.session_state.comment_input:
-            prefill_comment = str(existing.get("comment", ""))
-            st.session_state.comment_input = prefill_comment
-
-        comment = st.text_input("备注（可选）", key="comment_input")
-        st.session_state.comment_cache = comment
+    comment = st.text_input("备注（可选）", key="comment_input")
+    st.session_state.comment_cache = comment
 
 if clicked_label is not None:
     save_annotation(user_name, str(current_image), clicked_label, comment)
