@@ -8,12 +8,17 @@ import streamlit as st
 from oauth2client.service_account import ServiceAccountCredentials
 from PIL import Image
 
+# ============================================================
+# 基础配置
+# ============================================================
 IMAGE_DIR = "3band"
 ALLOWED_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
 LABELS = ["inner", "outer", "nuclear", "unclear", "not_ring", "skip"]
 GSHEET_ID = "1MAKgvgP0vFVTPpjLWmWhDKODEZHkP1ZRk7uVipAYsIs"
 
-
+# ============================================================
+# 页面设置
+# ============================================================
 st.set_page_config(page_title="Ring Galaxy Classifier", layout="wide")
 st.title("Ring Galaxy Classifier")
 
@@ -55,13 +60,28 @@ def init_gsheet():
 
 @st.cache_data(ttl=60, show_spinner=False)
 def fetch_user_records_from_gsheet(user_name: str):
+    """
+    返回当前用户的所有记录，并额外带上该记录在 Google Sheet 中的真实行号 sheet_row
+    方便后续 update 覆盖，而不是 append 新行。
+    """
     try:
         sheet = init_gsheet()
-        records = sheet.get_all_records()
-        return [
-            r for r in records
-            if str(r.get("user_name", "")).strip() == user_name
-        ]
+        all_values = sheet.get_all_values()
+        if not all_values:
+            return []
+
+        header = all_values[0]
+        records = []
+
+        for row_idx, row in enumerate(all_values[1:], start=2):  # Google Sheet 真正行号从2开始
+            padded_row = row + [""] * (len(header) - len(row))
+            record = dict(zip(header, padded_row))
+
+            if str(record.get("user_name", "")).strip() == user_name:
+                record["sheet_row"] = row_idx
+                records.append(record)
+
+        return records
     except Exception:
         return []
 
@@ -69,6 +89,8 @@ def fetch_user_records_from_gsheet(user_name: str):
 def load_user_state(user_name: str):
     user_records = fetch_user_records_from_gsheet(user_name)
     user_done_names = {str(r.get("image_name", "")).strip() for r in user_records}
+
+    # 同一张图如果有多条，默认以后出现的覆盖前面的
     user_record_map = {
         str(r.get("image_name", "")).strip(): r
         for r in user_records
@@ -80,24 +102,58 @@ def load_user_state(user_name: str):
 
 
 def save_annotation(user_name: str, image_path: str, label: str, comment: str):
+    """
+    同一用户 + 同一图片：
+    - 如果已有记录 -> 更新原行
+    - 如果没有记录 -> append 新行
+    """
     sheet = init_gsheet()
     image_name = Path(image_path).name
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    row = [user_name, image_name, label, comment, now]
-    sheet.append_row(row)
+    existing = st.session_state.user_record_map.get(image_name)
 
-    record = {
-        "user_name": user_name,
-        "image_name": image_name,
-        "label": label,
-        "comment": comment,
-        "timestamp": now,
-    }
+    if existing and existing.get("sheet_row"):
+        sheet_row = int(existing["sheet_row"])
+        new_row = [user_name, image_name, label, comment, now]
+        sheet.update(f"A{sheet_row}:E{sheet_row}", [new_row])
 
-    st.session_state.user_records.append(record)
-    st.session_state.user_done_names.add(image_name)
-    st.session_state.user_record_map[image_name] = record
+        updated_record = {
+            "user_name": user_name,
+            "image_name": image_name,
+            "label": label,
+            "comment": comment,
+            "timestamp": now,
+            "sheet_row": sheet_row,
+        }
+
+        # 更新 user_records 中对应那一条
+        for i, r in enumerate(st.session_state.user_records):
+            if int(r.get("sheet_row", -1)) == sheet_row:
+                st.session_state.user_records[i] = updated_record
+                break
+
+        st.session_state.user_record_map[image_name] = updated_record
+        st.session_state.user_done_names.add(image_name)
+
+    else:
+        row = [user_name, image_name, label, comment, now]
+        sheet.append_row(row)
+
+        # append 后重新拉一次用户数据，拿到新行号，最稳
+        fetch_user_records_from_gsheet.clear()
+        refreshed_records = fetch_user_records_from_gsheet(user_name)
+
+        user_records = refreshed_records
+        user_done_names = {str(r.get("image_name", "")).strip() for r in user_records}
+        user_record_map = {
+            str(r.get("image_name", "")).strip(): r
+            for r in user_records
+        }
+
+        st.session_state.user_records = user_records
+        st.session_state.user_done_names = user_done_names
+        st.session_state.user_record_map = user_record_map
 
     fetch_user_records_from_gsheet.clear()
 
@@ -118,11 +174,22 @@ def load_images():
     return files
 
 
-def get_next_unlabeled_index(images, done_names):
+def get_random_unlabeled_index(images, done_names):
     candidates = [i for i, p in enumerate(images) if p.name not in done_names]
     if not candidates:
         return 0 if images else None
     return random.choice(candidates)
+
+
+def get_index_by_exact_image_number(images, image_number: int):
+    """
+    输入 123 -> 找文件名 stem 恰好等于 '123' 的图片，如 123.png / 123.jpg
+    """
+    target = str(image_number)
+    for i, p in enumerate(images):
+        if p.stem == target:
+            return i
+    return None
 
 # ============================================================
 # 初始化状态
@@ -159,7 +226,7 @@ if user_name:
         st.session_state.user_name = user_name
         st.session_state.last_user_name = user_name
         load_user_state(user_name)
-        next_idx = get_next_unlabeled_index(images, st.session_state.user_done_names)
+        next_idx = get_random_unlabeled_index(images, st.session_state.user_done_names)
         if next_idx is not None:
             st.session_state.current_index = next_idx
         st.session_state.pending_comment_reset = True
@@ -184,7 +251,7 @@ side1, side2 = st.sidebar.columns(2)
 with side1:
     if st.button("刷新当前用户记录", use_container_width=True):
         load_user_state(user_name)
-        next_idx = get_next_unlabeled_index(images, st.session_state.user_done_names)
+        next_idx = get_random_unlabeled_index(images, st.session_state.user_done_names)
         if next_idx is not None:
             st.session_state.current_index = next_idx
         st.session_state.pending_comment_reset = True
@@ -192,7 +259,7 @@ with side1:
 
 with side2:
     if st.button("跳到未标注", use_container_width=True):
-        next_idx = get_next_unlabeled_index(images, st.session_state.user_done_names)
+        next_idx = get_random_unlabeled_index(images, st.session_state.user_done_names)
         if next_idx is not None:
             st.session_state.current_index = next_idx
         st.session_state.pending_comment_reset = True
@@ -269,22 +336,28 @@ with main_right:
 
     with nav2:
         if st.button("下一张", use_container_width=True):
-            st.session_state.current_index = min(num_total - 1, current_index + 1)
+            next_idx = get_random_unlabeled_index(images, st.session_state.user_done_names)
+            if next_idx is not None:
+                st.session_state.current_index = next_idx
             st.session_state.pending_comment_reset = True
             st.rerun()
 
     st.markdown("### 快速跳转")
-    jump_index = st.number_input(
-        "跳到第几张",
+    jump_number = st.number_input(
+        "跳到图片编号（如 123 -> 123.png）",
         min_value=1,
-        max_value=num_total,
-        value=current_index + 1,
+        value=int(current_image.stem) if current_image.stem.isdigit() else 1,
         step=1,
     )
+
     if st.button("跳转", use_container_width=True):
-        st.session_state.current_index = int(jump_index) - 1
-        st.session_state.pending_comment_reset = True
-        st.rerun()
+        target_idx = get_index_by_exact_image_number(images, int(jump_number))
+        if target_idx is not None:
+            st.session_state.current_index = target_idx
+            st.session_state.pending_comment_reset = True
+            st.rerun()
+        else:
+            st.warning(f"没有找到文件名为 {int(jump_number)} 的图片（如 {int(jump_number)}.png）")
 
     st.markdown("### 分类")
     cls_row1 = st.columns(3)
@@ -311,7 +384,7 @@ if clicked_label is not None:
     save_annotation(user_name, str(current_image), clicked_label, comment)
     st.session_state.last_saved_message = f"已保存：{current_image.name} → {clicked_label}"
 
-    next_idx = get_next_unlabeled_index(images, st.session_state.user_done_names)
+    next_idx = get_random_unlabeled_index(images, st.session_state.user_done_names)
     if next_idx is not None:
         st.session_state.current_index = next_idx
 
