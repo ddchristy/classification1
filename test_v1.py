@@ -1,10 +1,12 @@
 import random
+import base64
 from pathlib import Path
 from datetime import datetime
 
 import gspread
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 from oauth2client.service_account import ServiceAccountCredentials
 from PIL import Image
 
@@ -15,6 +17,9 @@ IMAGE_DIR = "3band"
 ALLOWED_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
 LABELS = ["inner", "outer", "nuclear", "unclear", "not_ring", "skip"]
 GSHEET_ID = "1MAKgvgP0vFVTPpjLWmWhDKODEZHkP1ZRk7uVipAYsIs"
+
+# 分类标准 PDF（与 .py 文件同目录）
+PDF_PATH = "criteria.pdf"   
 
 # ============================================================
 # 页面设置
@@ -61,8 +66,8 @@ def init_gsheet():
 @st.cache_data(ttl=60, show_spinner=False)
 def fetch_user_records_from_gsheet(user_name: str):
     """
-    返回当前用户的所有记录，并额外带上该记录在 Google Sheet 中的真实行号 sheet_row
-    方便后续 update 覆盖，而不是 append 新行。
+    返回当前用户的所有记录，并带上该记录在 Google Sheet 中的真实行号 sheet_row，
+    方便 update 覆盖，而不是 append 新行。
     """
     try:
         sheet = init_gsheet()
@@ -73,7 +78,7 @@ def fetch_user_records_from_gsheet(user_name: str):
         header = all_values[0]
         records = []
 
-        for row_idx, row in enumerate(all_values[1:], start=2):  # Google Sheet 真正行号从2开始
+        for row_idx, row in enumerate(all_values[1:], start=2):
             padded_row = row + [""] * (len(header) - len(row))
             record = dict(zip(header, padded_row))
 
@@ -88,10 +93,10 @@ def fetch_user_records_from_gsheet(user_name: str):
 
 def build_marked_history(user_records):
     """
-    根据当前用户记录构建“标注历史”：
+    构建当前用户的标注历史：
     - 同一张图只保留一次
-    - 按 timestamp 从早到晚排序
-    - 若 timestamp 解析失败，则尽量放后面
+    - 以后一次修改的 timestamp 为准
+    - 按 timestamp 从早到晚排列
     """
     latest_map = {}
 
@@ -114,8 +119,6 @@ def build_marked_history(user_records):
 def load_user_state(user_name: str):
     user_records = fetch_user_records_from_gsheet(user_name)
     user_done_names = {str(r.get("image_name", "")).strip() for r in user_records}
-
-    # 同一张图如果有多条，默认以后出现的覆盖前面的
     user_record_map = {
         str(r.get("image_name", "")).strip(): r
         for r in user_records
@@ -129,7 +132,7 @@ def load_user_state(user_name: str):
 
 def move_image_to_history_end(image_name: str):
     """
-    把刚标注/刚修改的图片放到用户历史末尾，表示“最近一次标注”
+    把刚标注/刚修改的图片放到历史末尾，表示最近一次标注。
     """
     history = st.session_state.get("marked_history", [])
     history = [x for x in history if x != image_name]
@@ -150,6 +153,7 @@ def save_annotation(user_name: str, image_path: str, label: str, comment: str):
     existing = st.session_state.user_record_map.get(image_name)
 
     if existing and existing.get("sheet_row"):
+        # 覆盖旧记录
         sheet_row = int(existing["sheet_row"])
         new_row = [user_name, image_name, label, comment, now]
         sheet.update(f"A{sheet_row}:E{sheet_row}", [new_row])
@@ -163,7 +167,6 @@ def save_annotation(user_name: str, image_path: str, label: str, comment: str):
             "sheet_row": sheet_row,
         }
 
-        # 更新 user_records 中对应那一条
         for i, r in enumerate(st.session_state.user_records):
             if int(r.get("sheet_row", -1)) == sheet_row:
                 st.session_state.user_records[i] = updated_record
@@ -174,10 +177,11 @@ def save_annotation(user_name: str, image_path: str, label: str, comment: str):
         move_image_to_history_end(image_name)
 
     else:
+        # 首次标注，追加新行
         row = [user_name, image_name, label, comment, now]
         sheet.append_row(row)
 
-        # append 后重新拉一次用户数据，拿到新行号，最稳
+        # 重新拉一次，确保拿到新行号
         fetch_user_records_from_gsheet.clear()
         refreshed_records = fetch_user_records_from_gsheet(user_name)
 
@@ -282,6 +286,13 @@ if "pending_comment_reset" not in st.session_state:
     st.session_state.pending_comment_reset = False
 
 # ============================================================
+# 侧边栏：分类标准
+# ============================================================
+st.sidebar.markdown("---")
+st.sidebar.subheader("分类标准")
+show_pdf = st.sidebar.checkbox("打开分类标准", value=False)
+
+# ============================================================
 # 侧边栏：用户
 # ============================================================
 st.sidebar.header("User")
@@ -304,42 +315,9 @@ if not st.session_state.user_name:
     st.info("请先在左侧输入用户名。")
     st.stop()
 
-# ============================================================
-# 分类标准（PDF）
-# ============================================================
-st.sidebar.markdown("---")
-st.sidebar.subheader("分类标准")
-
-PDF_PATH = "criteria.pdf"   # 改成你的 PDF 文件名
-
-show_pdf = st.sidebar.checkbox("打开分类标准", value=False)
-
-if show_pdf:
-    if Path(PDF_PATH).exists():
-        import base64
-
-        with open(PDF_PATH, "rb") as f:
-            pdf_bytes = f.read()
-
-        base64_pdf = base64.b64encode(pdf_bytes).decode("utf-8")
-        pdf_display = f"""
-        <iframe
-            src="data:application/pdf;base64,{base64_pdf}"
-            width="100%"
-            height="700px"
-            type="application/pdf"
-            style="border: 1px solid #ddd; border-radius: 8px;"
-        ></iframe>
-        """
-        st.sidebar.markdown(pdf_display, unsafe_allow_html=True)
-    else:
-        st.sidebar.warning(f"未找到 PDF 文件：{PDF_PATH}")
-
 user_name = st.session_state.user_name
 num_total = len(images)
 num_done = len(st.session_state.user_done_names)
-
-
 
 if num_total == 0:
     st.error(f"没有在文件夹 '{IMAGE_DIR}' 中找到图片。")
@@ -395,6 +373,33 @@ elif existing and st.session_state.comment_value == "":
     old_comment = str(existing.get("comment", "")).strip()
     if old_comment:
         st.session_state.comment_value = old_comment
+
+# ============================================================
+# 分类标准 PDF 显示区
+# ============================================================
+if show_pdf:
+    if Path(PDF_PATH).exists():
+        with open(PDF_PATH, "rb") as f:
+            pdf_bytes = f.read()
+
+        base64_pdf = base64.b64encode(pdf_bytes).decode("utf-8")
+
+        st.markdown("## 分类标准")
+        components.html(
+            f"""
+            <iframe
+                src="data:application/pdf;base64,{base64_pdf}"
+                width="100%"
+                height="900px"
+                type="application/pdf"
+                style="border: 1px solid #ccc; border-radius: 8px;"
+            ></iframe>
+            """,
+            height=920,
+            scrolling=True,
+        )
+    else:
+        st.warning(f"未找到 PDF 文件：{PDF_PATH}")
 
 # ============================================================
 # 主界面
