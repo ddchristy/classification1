@@ -1,12 +1,10 @@
 import random
-import base64
 from pathlib import Path
 from datetime import datetime
 
 import gspread
 import pandas as pd
 import streamlit as st
-import streamlit.components.v1 as components
 from oauth2client.service_account import ServiceAccountCredentials
 from PIL import Image
 
@@ -18,8 +16,8 @@ ALLOWED_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
 LABELS = ["inner", "outer", "nuclear", "unclear", "not_ring", "skip"]
 GSHEET_ID = "1MAKgvgP0vFVTPpjLWmWhDKODEZHkP1ZRk7uVipAYsIs"
 
-# 分类标准 PDF（与 .py 文件同目录）
-PDF_PATH = "criteria.pdf"   
+# 分类标准图片（与 .py 文件同目录）
+CRITERIA_IMAGE = "criteria.png"   # 改成你的真实文件名
 
 # ============================================================
 # 页面设置
@@ -65,10 +63,6 @@ def init_gsheet():
 
 @st.cache_data(ttl=60, show_spinner=False)
 def fetch_user_records_from_gsheet(user_name: str):
-    """
-    返回当前用户的所有记录，并带上该记录在 Google Sheet 中的真实行号 sheet_row，
-    方便 update 覆盖，而不是 append 新行。
-    """
     try:
         sheet = init_gsheet()
         all_values = sheet.get_all_values()
@@ -92,12 +86,6 @@ def fetch_user_records_from_gsheet(user_name: str):
 
 
 def build_marked_history(user_records):
-    """
-    构建当前用户的标注历史：
-    - 同一张图只保留一次
-    - 以后一次修改的 timestamp 为准
-    - 按 timestamp 从早到晚排列
-    """
     latest_map = {}
 
     for r in user_records:
@@ -131,9 +119,6 @@ def load_user_state(user_name: str):
 
 
 def move_image_to_history_end(image_name: str):
-    """
-    把刚标注/刚修改的图片放到历史末尾，表示最近一次标注。
-    """
     history = st.session_state.get("marked_history", [])
     history = [x for x in history if x != image_name]
     history.append(image_name)
@@ -141,11 +126,6 @@ def move_image_to_history_end(image_name: str):
 
 
 def save_annotation(user_name: str, image_path: str, label: str, comment: str):
-    """
-    同一用户 + 同一图片：
-    - 如果已有记录 -> 更新原行
-    - 如果没有记录 -> append 新行
-    """
     sheet = init_gsheet()
     image_name = Path(image_path).name
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -153,7 +133,6 @@ def save_annotation(user_name: str, image_path: str, label: str, comment: str):
     existing = st.session_state.user_record_map.get(image_name)
 
     if existing and existing.get("sheet_row"):
-        # 覆盖旧记录
         sheet_row = int(existing["sheet_row"])
         new_row = [user_name, image_name, label, comment, now]
         sheet.update(f"A{sheet_row}:E{sheet_row}", [new_row])
@@ -177,11 +156,9 @@ def save_annotation(user_name: str, image_path: str, label: str, comment: str):
         move_image_to_history_end(image_name)
 
     else:
-        # 首次标注，追加新行
         row = [user_name, image_name, label, comment, now]
         sheet.append_row(row)
 
-        # 重新拉一次，确保拿到新行号
         fetch_user_records_from_gsheet.clear()
         refreshed_records = fetch_user_records_from_gsheet(user_name)
 
@@ -224,9 +201,6 @@ def get_random_unlabeled_index(images, done_names):
 
 
 def get_index_by_exact_image_number(images, image_number: int):
-    """
-    输入 123 -> 找文件名 stem 恰好等于 '123' 的图片，如 123.png / 123.jpg
-    """
     target = str(image_number)
     for i, p in enumerate(images):
         if p.stem == target:
@@ -235,13 +209,6 @@ def get_index_by_exact_image_number(images, image_number: int):
 
 
 def get_previous_marked_index(images, current_image_name, marked_history):
-    """
-    上一张 = 跳到“用户标注历史中的上一张”
-    规则：
-    - 如果当前图片不在历史里 -> 跳到最后一张已标注图片
-    - 如果当前图片在历史里且不是第一张 -> 跳到历史中的前一张
-    - 如果当前图片已经是历史第一张 -> 仍停在第一张
-    """
     if not marked_history:
         return None
 
@@ -290,7 +257,7 @@ if "pending_comment_reset" not in st.session_state:
 # ============================================================
 st.sidebar.markdown("---")
 st.sidebar.subheader("分类标准")
-show_pdf = st.sidebar.checkbox("打开分类标准", value=False)
+show_criteria = st.sidebar.checkbox("打开分类标准", value=False)
 
 # ============================================================
 # 侧边栏：用户
@@ -375,31 +342,14 @@ elif existing and st.session_state.comment_value == "":
         st.session_state.comment_value = old_comment
 
 # ============================================================
-# 分类标准 PDF 显示区
+# 分类标准图片显示区
 # ============================================================
-if show_pdf:
-    if Path(PDF_PATH).exists():
-        with open(PDF_PATH, "rb") as f:
-            pdf_bytes = f.read()
-
-        base64_pdf = base64.b64encode(pdf_bytes).decode("utf-8")
-
-        st.markdown("## 分类标准")
-        components.html(
-            f"""
-            <iframe
-                src="data:application/pdf;base64,{base64_pdf}"
-                width="100%"
-                height="900px"
-                type="application/pdf"
-                style="border: 1px solid #ccc; border-radius: 8px;"
-            ></iframe>
-            """,
-            height=920,
-            scrolling=True,
-        )
+if show_criteria:
+    st.markdown("## 分类标准")
+    if Path(CRITERIA_IMAGE).exists():
+        st.image(CRITERIA_IMAGE, caption=Path(CRITERIA_IMAGE).name, use_container_width=True)
     else:
-        st.warning(f"未找到 PDF 文件：{PDF_PATH}")
+        st.warning(f"未找到分类标准图片：{CRITERIA_IMAGE}")
 
 # ============================================================
 # 主界面
