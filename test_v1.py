@@ -8,16 +8,14 @@ import streamlit as st
 from oauth2client.service_account import ServiceAccountCredentials
 from PIL import Image
 
-# ============================================================
-# 基础配置
-# ============================================================
+
 IMAGE_DIR = "3band_200"
 ALLOWED_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
 LABELS = ["inner", "outer", "nuclear", "unclear", "not_ring", "skip"]
 GSHEET_ID = "1MAKgvgP0vFVTPpjLWmWhDKODEZHkP1ZRk7uVipAYsIs"
 
-# 分类标准图片（与 .py 文件同目录）
-CRITERIA_IMAGE = "criteria.png"   # 改成你的真实文件名
+
+CRITERIA_IMAGE = "criteria.png"   
 
 # ============================================================
 # 页面设置
