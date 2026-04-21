@@ -9,7 +9,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 from PIL import Image
 
 
-IMAGE_DIR = "3band_200"
+IMAGE_DIR = "3band_400"
 ALLOWED_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
 LABELS = ["inner", "outer", "nuclear", "unclear", "not_ring", "skip"]
 GSHEET_ID = "1MAKgvgP0vFVTPpjLWmWhDKODEZHkP1ZRk7uVipAYsIs"
