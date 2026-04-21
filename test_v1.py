@@ -15,7 +15,7 @@ LABELS = ["inner", "outer", "nuclear", "unclear", "not_ring", "skip"]
 GSHEET_ID = "1MAKgvgP0vFVTPpjLWmWhDKODEZHkP1ZRk7uVipAYsIs"
 
 
-CRITERIA_IMAGE = "criteria.png"   
+CRITERIA_IMAGE = "criteria_01.png"   
 
 # ============================================================
 # 页面设置
