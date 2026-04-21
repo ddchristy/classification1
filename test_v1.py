@@ -11,7 +11,7 @@ from PIL import Image
 # ============================================================
 # 基础配置
 # ============================================================
-IMAGE_DIR = "3band"
+IMAGE_DIR = "3band_200"
 ALLOWED_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
 LABELS = ["inner", "outer", "nuclear", "unclear", "not_ring", "skip"]
 GSHEET_ID = "1MAKgvgP0vFVTPpjLWmWhDKODEZHkP1ZRk7uVipAYsIs"
